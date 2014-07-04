@@ -1,345 +1,236 @@
 <?php
-	/**
-	 * CharityClear payment module
-	 *
-	 * @class      CharityClear
-	 *
-	 * @author     Paul Lashbrook
-	 * @version    1.1.5
-	 * @copyright  CharityClear Limited
-	 * @package    shopp
-	 * @since      1.1
-	 * @subpackage CharityClear
-	 *
-	 * $Id$
-	 **/
+/**
+ * CharityClear
+ *
+ * @author Jonathan Davis
+ * @copyright Ingenesis Limited, May 2009-2014
+ * @package shopp
+ * @version 1.3.4
+ * @since 1.1
+ **/
 
-	class CharityClear extends GatewayFramework implements GatewayModule {
+defined( 'WPINC' ) || header( 'HTTP/1.1 403' ) & exit; // Prevent direct access
 
-		// Settings
-		public $secure = false;
-		public $saleonly = true;
-		public $precision = 2;
-		public $decimals = '.';
-		public $thousands = '';
+class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 
-		public $captures = true; // merchant initiated capture supported
-		public $refunds = true; // refunds supported
+	// Settings
+	public $secure = false;
+	public $saleonly = true;
 
+	// URLs
+	const LIVEURL = 'https://gateway.charityclear.com/paymentform/';
+	const SANDBOX = 'https://sandbox.2checkout.com/checkout/purchase';
 
-		// URLs
-		public $hosted = 'https://gateway.charityclear.com/paymentform/'; // for sales
-		public $direct = 'https://gateway.charityclear.com/direct/'; // for refunds
+	public function __construct () {
+		parent::__construct();
 
-		function __construct() {
-			parent::__construct();
+		$this->setup('merchantID', 'verify', 'secret', 'testmode');
 
-			$this->setup( 'merchantID', 'verify', 'secret', 'returnurl', 'testmode' );
-
-			$this->settings['returnurl'] = add_query_arg( 'rmtpay', 'process', shoppurl( false, 'thanks', false ) );
-
-			// add_action('shopp_txn_update',array(&$this,'notifications'));
-			add_action( 'shopp_charityclear_sale', array(
-														$this,
-														'sale'
-												   ) );
-			// add refund event handler
-			add_action( 'shopp_charityclear_refund', array(
-														  $this,
-														  'refund'
-													 ) );
-
-
-		}
-
-		function actions() {
-			add_action( 'shopp_process_checkout', array(
-													   &$this,
-													   'checkout'
-												  ), 9 );
-			add_action( 'shopp_init_checkout', array(
-													&$this,
-													'init'
-											   ) );
-
-			add_action( 'shopp_init_confirmation', array(
-														&$this,
-														'confirmation'
-												   ) );
-			add_action( 'shopp_remote_payment', array(
-													 &$this,
-													 'returned'
-												) );
-		}
-
-		function confirmation() {
-			add_filter( 'shopp_confirm_url', array(
-												  &$this,
-												  'url'
-											 ) );
-			add_filter( 'shopp_confirm_form', array(
-												   &$this,
-												   'form'
-											  ) );
-		}
-
-		function checkout() {
-			$this->Order->confirm = true;
-		}
-
-		function url( $url ) {
-			return $this->hosted;
-		}
-
-		/**
-		 * creates the payment form
-		 *
-		 * @param $form
-		 *
-		 * @return string
-		 */
-		function form( $form ) {
-
-			// get the next order ID...
-			$purchasetable = DatabaseObject::tablename( Purchase::$table );
-			$next          = DB::query( "SELECT IF ((MAX(id)) > 0,(MAX(id)+1),1) AS id FROM $purchasetable LIMIT 1" );
-
-			$fields = array();
-
-			$fields['merchantID']        = str_true( $this->settings['testmode'] ) ? 100003 : $this->settings['merchantID'];
-			$fields['amount']            = $this->amount( 'total' ) * 100; // multiply by 100 to remove the floating point number
-			$fields['transactionUnique'] = date( 'mdy' ) . '-' . date( 'His' ) . '-' . $next->id; // this will stop a customer paying for the same order twice within 5 minutes
-			$fields['action']            = 'SALE'; // sale as action type as we wants all of dems monies
-			$fields['type']              = 1; // type =1 for ecommerce, would need to be 2 for moto (staff/phone ordering)
-			$fields['redirectURL']       = $this->settings['returnurl']; // the page the customer gets returned to
-			$fields['customerAddress']   = $this->Order->Billing->address . "\n" . $this->Order->Billing->xaddress . "\n" . $this->Order->Billing->city . "\n" . $this->Order->Billing->state .
-										   "\n" . $this->Order->Billing->country;
-			$fields['customerName']      = $this->Order->Billing->name;
-			$fields['customerPostcode']  = $this->Order->Billing->postcode;
-			$fields['customerEmail']     = $this->Order->Customer->email;
-			$fields['customerPhone']     = $this->Order->Customer->phone;
-
-			ksort( $fields );
-
-			$fields['signature'] = hash( 'SHA512', http_build_query( $fields, '', '&' ) . $this->settings['secret'] ) . '|' . implode( ',', array_keys( $fields ) );
-
-			return $form . $this->format( $fields );
-		}
-
-		/**
-		 * this function handles the return checking
-		 */
-		function returned() {
-
-			if ( empty( $_POST['transactionUnique'] ) ) {
-				new ShoppError( __( 'The order submitted by CharityClear did not specify a transaction ID.', 'Shopp' ), 'cc_validation_error', SHOPP_TRXN_ERR );
-				shopp_redirect( shoppurl( false, 'checkout' ) );
-			}
-
-			// check the order values match
-			if ( (float)$_POST['amount'] !== $this->amount( 'total' ) * 100 ) {
-				new ShoppError( __( 'The order submitted by CharityClear did not match the order value of our order, please contact support.', 'Shopp' ), 'cc_validation_error', SHOPP_TRXN_ERR );
-				shopp_redirect( shoppurl( false, 'checkout' ) );
-			}
-
-			if ( isset( $_POST['signature'] ) ) {
-				// do a signature check
-				ksort( $_POST );
-				$signature = $_POST['signature'];
-				unset( $_POST['signature'] );
-				$check = preg_replace( '/%0D%0A|%0A%0D|%0A|%0D/i', '%0A', http_build_query( $_POST, '', '&' ) . $this->settings['secret'] );
-
-				if ( $signature !== hash( 'SHA512', $check ) ) {
-					new ShoppError( __( 'The calculated signature of the payment return did not match, for security this order cant complete automatically please contact support.', 'Shopp' ), 'cc_validation_error', SHOPP_TRXN_ERR );
-					shopp_redirect( shoppurl( false, 'checkout' ) );
-
-				}
-			}
-
-			// do a check to make sure it was actually a good payment
-			if ( (int)$_POST['responseCode'] !== 0 ) {
-				new ShoppError( __( 'There was a issue with that card, no payment has been taken, please retry', 'Shopp' ), 'cc_validation_error', SHOPP_TRXN_ERR );
-				shopp_redirect( shoppurl( false, 'checkout' ) );
-			}
-
-			// Create the order and begin processing it
-			shopp_add_order_event( false, 'purchase', array(
-														   'gateway' => $this->module,
-														   'txnid'   => $_POST['xref']
-													  ) );
-
-			ShoppOrder()->purchase = ShoppPurchase()->id;
-			shopp_redirect( shoppurl( false, 'thanks', false ) );
-
-		}
-
-		/**
-		 * @param $Event
-		 */
-		function sale( $Event ) {
-
-			$Paymethod = $this->Order->paymethod();
-			$Billing   = $this->Order->Billing;
-
-			shopp_add_order_event( $Event->order, 'authed', array(
-																 'txnid'     => $_POST['xref'],
-																 // Transaction ID
-																 'amount'    => $_POST['amount'] / 100,
-																 // Gross amount authorized
-																 'gateway'   => $this->module,
-																 // Gateway handler name (module name from @subpackage)
-																 'paymethod' => $Paymethod->label,
-																 // Payment method (payment method label from payment settings)
-																 'paytype'   => $Billing->cardtype,
-																 // Type of payment (check, MasterCard, etc)
-																 'payid'     => $Billing->card,
-																 // Payment ID (last 4 of card or check number)
-																 'capture'   => true
-																 // Capture flag
-															) );
-
-		}
-
-		/**
-		 * performs a refund of a transaction
-		 *
-		 * @param RefundOrderEvent $Event
-		 */
-		function refund( RefundOrderEvent $Event ) {
-
-			$Purchase = new Purchase( $Event->order );
-
-			$fields = array(
-				'merchantID' => $this->settings['merchantID'],
-				'orderRef'   => $Event->reason,
-				'action'     => 'REFUND',
-				'type'       => 2,
-				'xref'       => $Event->txnid,
-				'amount'     => $Event->amount * 100
-			);
-
-			$ret = $this->makeApiCall( $fields );
-
-			if ( $ret['responseCode'] == 0 ) {
-				// Initiate shopp refunded event
-				shopp_add_order_event( $Purchase->id, 'refunded', array(
-																	   'txnid'   => $ret['xref'],
-																	   // Transaction ID for the REFUND event
-																	   'amount'  => $ret['amount'] / 100,
-																	   // Amount refunded
-																	   'gateway' => $this->module
-																	   // Gateway handler name (module name from @subpackage)
-																  ) );
-			}
-
-		}
-
-		/**
-		 * makes a request to the Cardstream Direct API
-		 *
-		 * @param $params
-		 *
-		 * @return array|bool
-		 */
-		function makeApiCall( $params ) {
-			$header = array(
-				'http' => array(
-					'method'        => 'POST',
-					'ignore_errors' => true
-				)
-			);
-			if ( $params !== null && !empty( $params ) ) {
-				// check if signature has been provided if not, make it
-				if ( !isset( $params['signature'] ) ) {
-					$params['signature'] = $this->signRequest( $params );
-				}
-
-				$params = http_build_query( $params, '', '&' );
-
-				$header["http"]['header']  = 'Content-Type: application/x-www-form-urlencoded';
-				$header['http']['content'] = $params;
-
-			}
-
-			$context = stream_context_create( $header );
-			$fp      = fopen( $this->direct, 'rb', false, $context );
-			if ( !$fp ) {
-				$res = false;
-			} else {
-				$res = stream_get_contents( $fp );
-				parse_str( $res, $res );
-			}
-
-			if ( $res === false ) {
-				return false;
-			}
-
-			return $res;
-
-		}
-
-		/**
-		 * @param      $sig_fields
-		 * @param null $secret
-		 *
-		 * @return string
-		 */
-		function signRequest( $sig_fields, $secret = null ) {
-
-			if ( is_array( $sig_fields ) ) {
-				ksort( $sig_fields );
-				$sig_fields = http_build_query( $sig_fields, '', '&' ) . ( $secret === null ? $this->settings['secret'] : $secret );
-			} else {
-				$sig_fields .= ( $secret === null ? $this->settings['secret'] : $secret );
-			}
-
-			return hash( 'SHA512', $sig_fields );
-
-		}
-
-
-		function settings() {
-
-			$this->ui->text( 0, array(
-									 'name'  => 'merchantID',
-									 'size'  => 10,
-									 'value' => $this->settings['merchantID'],
-									 'label' => __( 'Your CharityClear merchant account number.', 'Shopp' )
-								) );
-
-			$this->ui->text( 0, array(
-									 'name'     => 'returnurl',
-									 'size'     => 40,
-									 'value'    => $this->settings['returnurl'],
-									 'readonly' => 'readonly',
-									 'classes'  => 'selectall',
-									 'label'    => __( 'This for most cases wont need to be changed, added as a config value so the merchant can change just in case', 'Shopp' )
-								) );
-
-			$this->ui->checkbox( 1, array(
-										 'name'    => 'testmode',
-										 'checked' => $this->settings['testmode'],
-										 'label'   => __( 'Enable test mode, will default the merchantID to 100003 ignoring the config value', 'Shopp' )
-									) );
-
-			$this->ui->text( 1, array(
-									 'name'  => 'secret',
-									 'size'  => 10,
-									 'value' => $this->settings['secret'],
-									 'label' => __( 'Your CharityClear secret word for order signatures.', 'Shopp' )
-								) );
-
-			$this->ui->p( 1, array(
-								  'name'     => 'returnurl',
-								  'size'     => 40,
-								  'value'    => $this->settings['returnurl'],
-								  'readonly' => 'readonly',
-								  'classes'  => 'selectall',
-								  'content'  => '<span style="width: 300px;">&nbsp;</span>'
-							 ) );
-
-		}
+		add_filter('shopp_purchase_order_charityclear_processing', array($this, 'processing'));
+		add_action('shopp_remote_payment', array($this, 'returned'));
 
 	}
 
-?>
+	public function actions () { /* Not implemented */ }
+
+	public function processing () {
+		return array($this, 'submit');
+	}
+
+	public function form ( ShoppPurchase $Purchase ) {
+
+
+		$fields = array();
+
+		$fields['merchantID']        = str_true( $this->settings['testmode'] ) ? 100003 : $this->settings['merchantID'];
+		$fields['amount']            = $this->amount( 'total' ) * 100; // multiply by 100 to remove the floating point number
+		$fields['transactionUnique'] = date( 'mdy' ) . '-' . date( 'His' ) . '-' .$Purchase->id; // this will stop a customer paying for the same order twice within 5 minutes
+		$fields['action']            = 'SALE'; // sale as action type as we wants all of dems monies
+		$fields['type']              = 1; // type =1 for ecommerce, would need to be 2 for moto (staff/phone ordering)
+		$fields['redirectURL']       = $this->settings['returnurl']; // the page the customer gets returned to
+		$fields['orderRef']       = 	$Purchase->id; // the page the customer gets returned to
+		$fields['customerAddress']   = $this->Order->Billing->address . "\n" . $this->Order->Billing->xaddress . "\n" . $this->Order->Billing->city . "\n" . $this->Order->Billing->state .
+									   "\n" . $this->Order->Billing->country;
+		$fields['customerName']      = $this->Order->Billing->name;
+		$fields['customerPostcode']  = $this->Order->Billing->postcode;
+		$fields['customerEmail']     = $this->Order->Customer->email;
+		$fields['customerPhone']     = $this->Order->Customer->phone;
+
+		ksort( $fields );
+
+		$fields['signature'] = hash( 'SHA512', http_build_query( $fields, '', '&' ) . $this->settings['secret'] ) . '|' . implode( ',', array_keys( $fields ) );
+
+		return $this->format( $fields );
+
+
+
+	}
+
+	/**
+	 * Builds a form to send the order to PayPal for processing
+	 *
+	 * @author Jonathan Davis
+	 * @since 1.3
+	 *
+	 * @return string PayPal cart form
+	 **/
+	public function submit ( ShoppPurchase $Purchase ) {
+		$id = sanitize_key( $this->module );
+		$title = Shopp::__( 'Sending order to Charity Clear&hellip;' );
+		$message = '<form id="' . $id . '" action="' . self::LIVEURL . '" method="POST">' .
+					$this->form( $Purchase ) .
+					'<h1>' . $title . '</h1>' .
+					'<noscript>' .
+					'<p>' . Shopp::__( 'Click the &quot;Submit Order to Charity Clear&quot; button below to submit your order to Charity Clear for payment processing:' ) . '</p>' .
+					'<p><input type="submit" name="submit" value="' . Shopp::__('Submit Order to Charity Clear'). '" id="' . $id . '" /></p>' .
+					'</noscript>' .
+					'</form>' .
+					'<script type="text/javascript">document.getElementById("' . $id . '").submit();</script></body></html>';
+
+		wp_die( $message, $title, array( 'response' => 200 ) );
+	}
+
+
+	public function returned () {
+
+		if ( $this->id() != $_GET['rmtpay'] ) return; // Not our offsite payment
+
+
+		if ( isset( $_POST['signature'] ) ) {
+			// do a signature check
+			ksort( $_POST );
+			$signature = $_POST['signature'];
+			unset( $_POST['signature'] );
+			$check = preg_replace( '/%0D%0A|%0A%0D|%0A|%0D/i', '%0A', http_build_query( $_POST, '', '&' ) . $this->settings['secret'] );
+
+			if ( $signature !== hash( 'SHA512', $check ) ) {
+				shopp_add_error(Shopp::__( 'The calculated signature of the payment return did not match, for security this order cant complete automatically please contact support.', 'Shopp' ), 'cc_validation_error', SHOPP_TRXN_ERR );
+				shopp::redirect( shopp::url( false, 'checkout' ) );
+
+			}
+		}
+
+		// do a check to make sure it was actually a good payment
+		if ( (int)$_POST['responseCode'] !== 0 ) {
+			shopp_add_error(Shopp::__( 'There was a issue with that card, no payment has been taken, please retry', 'Shopp' ), 'cc_validation_error', SHOPP_TRXN_ERR );
+			shopp::redirect( shopp::url( false, 'checkout' ) );
+		}
+
+
+		if ( empty($_POST['orderRef']) ) {
+			shopp_add_error(Shopp::__('The order submitted by Charity Clear did not specify a transaction ID.'), SHOPP_TRXN_ERR);
+			Shopp::redirect(Shopp::url(false, 'checkout'));
+		}
+
+		$Purchase = ShoppPurchase(new ShoppPurchase((int)$_POST['orderRef']));
+		if ( ! $Purchase->exists() ) {
+			shopp_add_error(Shopp::__('The order submitted by Charity Clear did not match any submitted orders.'), SHOPP_TRXN_ERR);
+			Shopp::redirect(Shopp::url(false, 'checkout'));
+		}
+
+
+
+		add_action( 'shopp_authed_order_event', array( ShoppOrder(), 'notify' ) );
+		add_action( 'shopp_authed_order_event', array( ShoppOrder(), 'accounts' ) );
+		add_action( 'shopp_authed_order_event', array( ShoppOrder(), 'success' ) );
+
+		shopp_add_order_event($Purchase->id, 'authed', array(
+			'txnid' => $_POST['xref'],   // Transaction ID
+			'amount' => (float)$_POST['ammount']/100,  // Gross amount authorized
+			'fees' => false,            // Fees associated with transaction
+			'gateway' => $this->module, // The gateway module name
+			'paymethod' => 'Charity Clear', // Payment method (payment method label from payment settings)
+			'paytype' => $pay_method,   // Type of payment (check, MasterCard, etc)
+			'payid' => $invoice_id,     // Payment ID (last 4 of card or check number or other payment id)
+			'capture' => true           // Capture flag
+		));
+
+		ShoppOrder()->purchase = ShoppPurchase()->id;
+		Shopp::redirect( Shopp::url(false, 'thanks', false) );
+
+	}
+
+	public function authed ( ShoppPurchase $Order ) {
+
+		$Paymethod = $this->Order->paymethod();
+		$Billing = $this->Order->Billing;
+
+		shopp_add_order_event($Order->id, 'authed', array(
+			'txnid' => $_POST['xref'],						// Transaction ID
+			'amount' => $_POST['ammount']/100,							// Gross amount authorized
+			'gateway' => $this->module,								// Gateway handler name (module name from @subpackage)
+			'paymethod' => $Paymethod->label,						// Payment method (payment method label from payment settings)
+			'paytype' => $Billing->cardtype,						// Type of payment (check, MasterCard, etc)
+			'payid' => $Billing->card,								// Payment ID (last 4 of card or check number)
+			'capture' => true										// Capture flag
+		));
+
+	}
+
+	protected function verify ( $key ) {
+		if ( Shopp::str_true($this->settings['testmode']) ) return true;
+		$order = $_GET['order_number'];
+		$total = $_GET['total'];
+
+		$verification = strtoupper(md5($this->settings['secret'] .
+							$this->settings['sid'] .
+							$order .
+							$total
+						));
+
+		return ( $verification == $key );
+	}
+
+	protected function returnurl () {
+		return add_query_arg('rmtpay', $this->id(), Shopp::url(false, 'thanks'));
+	}
+
+	protected function itemname ( $Item ) {
+		$name = $Item->name . ( empty($Item->option->label) ? '' : ' ' . $Item->option->label );
+		$name = str_replace(array('<', '>'), '', $name);
+		return substr($name, 0, 128);
+	}
+
+	public function settings () {
+
+		$this->ui->text(0,array(
+			'name' => 'merchantID',
+			'size' => 10,
+			'value' => $this->settings['merchantID'],
+			'label' => __('Your CharityClear merchant ID.','Shopp')
+		));
+
+
+		$this->ui->checkbox(0,array(
+			'name' => 'verify',
+			'checked' => $this->settings['verify'],
+			'label' => __('Enable order verification','Shopp')
+		));
+
+		$this->ui->text(0,array(
+			'name' => 'secret',
+			'size' => 10,
+			'value' => $this->settings['secret'],
+			'label' => __('Your Charity Clear signature key.','Shopp')
+		));
+
+		$this->ui->checkbox(0,array(
+			'name' => 'testmode',
+			'checked' => $this->settings['testmode'],
+			'label' => __('Enable test mode','Shopp')
+		));
+
+		$this->ui->text(1, array(
+			'name' => 'returnurl',
+			'size' => 64,
+			'value' => $this->returnurl(),
+			'readonly' => 'readonly',
+			'class' => 'selectall',
+			'label' => __('','Shopp')
+		));
+
+		$script = "var tc ='shoppcharityclear';jQuery(document).bind(tc+'Settings',function(){var $=jqnc(),p='#'+tc+'-',v=$(p+'verify'),t=$(p+'secret');v.change(function(){v.prop('checked')?t.parent().fadeIn('fast'):t.parent().hide();}).change();});";
+		$this->ui->behaviors( $script );
+	}
+
+}
