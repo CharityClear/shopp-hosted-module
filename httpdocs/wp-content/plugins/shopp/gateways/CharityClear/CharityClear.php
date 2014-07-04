@@ -2,8 +2,8 @@
 /**
  * CharityClear
  *
- * @author Jonathan Davis
- * @copyright Ingenesis Limited, May 2009-2014
+ * @author Paul Lashbrook
+ * @copyright Charity Clear
  * @package shopp
  * @version 1.3.4
  * @since 1.1
