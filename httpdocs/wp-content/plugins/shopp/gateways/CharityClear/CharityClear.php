@@ -58,7 +58,7 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 
 		ksort( $fields );
 
-		$fields['signature'] = hash( 'SHA512', http_build_query( $fields, '', '&' ) . $this->settings['secret'] ) . '|' . implode( ',', array_keys( $fields ) );
+		$fields['signature'] = hash( 'SHA512', http_build_query( $fields, '', '&' ) . (str_true( $this->settings['testmode'] ) ? 'Circle4Take40Idea' : $this->settings['secret'])) . '|' . implode( ',', array_keys( $fields ) );
 
 		return $this->format( $fields );
 
@@ -101,7 +101,7 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 			ksort( $_POST );
 			$signature = $_POST['signature'];
 			unset( $_POST['signature'] );
-			$check = preg_replace( '/%0D%0A|%0A%0D|%0A|%0D/i', '%0A', http_build_query( $_POST, '', '&' ) . $this->settings['secret'] );
+			$check = preg_replace( '/%0D%0A|%0A%0D|%0A|%0D/i', '%0A', http_build_query( $_POST, '', '&' ) . (str_true( $this->settings['testmode'] ) ? 'Circle4Take40Idea' : $this->settings['secret']));
 
 			if ( $signature !== hash( 'SHA512', $check ) ) {
 				shopp_add_error(Shopp::__( 'The calculated signature of the payment return did not match, for security this order cant complete automatically please contact support.', 'Shopp' ), 'cc_validation_error', SHOPP_TRXN_ERR );
