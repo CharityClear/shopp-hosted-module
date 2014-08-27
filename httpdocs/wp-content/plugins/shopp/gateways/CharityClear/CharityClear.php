@@ -136,7 +136,7 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 
 		shopp_add_order_event($Purchase->id, 'authed', array(
 			'txnid' => $_POST['xref'],   // Transaction ID
-			'amount' => (float)$_POST['ammount']/100,  // Gross amount authorized
+			'amount' => (float)$_POST['amount']/100,  // Gross amount authorized
 			'fees' => false,            // Fees associated with transaction
 			'gateway' => $this->module, // The gateway module name
 			'paymethod' => 'Charity Clear', // Payment method (payment method label from payment settings)
