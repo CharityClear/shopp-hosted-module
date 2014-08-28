@@ -44,7 +44,7 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 
 		$fields = array();
 
-		$fields['merchantID'] 		 = str_true( $this->settings['testmode'] ) ? TEST_ACCOUNT : $this->settings['merchantID'];
+		$fields['merchantID'] 		 = str_true( $this->settings['testmode'] ) ? self::TEST_ACCOUNT : $this->settings['merchantID'];
 		$fields['amount']            = $this->amount( 'total' ) * 100; // multiply by 100 to remove the floating point number
 		$fields['transactionUnique'] = date( 'mdy' ) . '-' . date( 'His' ) . '-' .$Purchase->id; // this will stop a customer paying for the same order twice within 5 minutes
 		$fields['action']            = 'SALE';
@@ -60,7 +60,7 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 
 		ksort( $fields );
 
-		$fields['signature'] = hash( 'SHA512', http_build_query( $fields, '', '&' ) . (str_true( $this->settings['testmode'] ) ? TEST_SIG : $this->settings['secret'])) . '|' . implode( ',', array_keys( $fields ) );
+		$fields['signature'] = hash( 'SHA512', http_build_query( $fields, '', '&' ) . (str_true( $this->settings['testmode'] ) ? self::TEST_SIG : $this->settings['secret'])) . '|' . implode( ',', array_keys( $fields ) );
 
 		return $this->format( $fields );
 
@@ -101,7 +101,7 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 			ksort( $_POST );
 			$signature = $_POST['signature'];
 			unset( $_POST['signature'] );
-			$check = preg_replace( '/%0D%0A|%0A%0D|%0A|%0D/i', '%0A', http_build_query( $_POST, '', '&' ) . (str_true( $this->settings['testmode'] ) ? TEST_SIG : $this->settings['secret']));
+			$check = preg_replace( '/%0D%0A|%0A%0D|%0A|%0D/i', '%0A', http_build_query( $_POST, '', '&' ) . (str_true( $this->settings['testmode'] ) ? self::TEST_SIG : $this->settings['secret']));
 
 			if ( $signature !== hash( 'SHA512', $check ) ) {
 				shopp_add_error(Shopp::__( 'The calculated signature of the payment return did not match, for security this order cant complete automatically please contact support.', 'Shopp' ), 'cc_validation_error', SHOPP_TRXN_ERR );
