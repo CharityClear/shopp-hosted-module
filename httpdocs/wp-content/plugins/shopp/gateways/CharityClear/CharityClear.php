@@ -5,7 +5,7 @@
  * @author Paul Lashbrook
  * @copyright Charity Clear
  * @package shopp
- * @version 1.3.4
+ * @version 1.3.5
  * @since 1.1
  **/
 
@@ -17,16 +17,19 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 	public $secure = false;
 	public $saleonly = true;
 
-	// URLs
-	const LIVEURL = 'https://gateway.charityclear.com/paymentform/';
-	const SANDBOX = 'https://sandbox.2checkout.com/checkout/purchase';
+	// Skinning constants
+	const RESELLER_NAME = 'Charity Clear';
+	const RESELLER_FUNC = 'charityclear';
+	const TEST_ACCOUNT 	= 100003;
+	const TEST_SIG 		= 'Circle4Take40Idea';
+	const LIVEURL 		= 'https://gateway.charityclear.com/paymentform/';
 
 	public function __construct () {
 		parent::__construct();
 
 		$this->setup('merchantID', 'verify', 'secret', 'testmode');
 
-		add_filter('shopp_purchase_order_charityclear_processing', array($this, 'processing'));
+		add_filter('shopp_purchase_order_' . self::RESELLER_FUNC . '_processing', array($this, 'processing'));
 		add_action('shopp_remote_payment', array($this, 'returned'));
 
 	}
@@ -39,16 +42,15 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 
 	public function form ( ShoppPurchase $Purchase ) {
 
-
 		$fields = array();
 
-		$fields['merchantID']        = str_true( $this->settings['testmode'] ) ? 100003 : $this->settings['merchantID'];
+		$fields['merchantID'] 		 = str_true( $this->settings['testmode'] ) ? TEST_ACCOUNT : $this->settings['merchantID'];
 		$fields['amount']            = $this->amount( 'total' ) * 100; // multiply by 100 to remove the floating point number
 		$fields['transactionUnique'] = date( 'mdy' ) . '-' . date( 'His' ) . '-' .$Purchase->id; // this will stop a customer paying for the same order twice within 5 minutes
-		$fields['action']            = 'SALE'; // sale as action type as we wants all of dems monies
+		$fields['action']            = 'SALE';
 		$fields['type']              = 1; // type =1 for ecommerce, would need to be 2 for moto (staff/phone ordering)
 		$fields['redirectURL']       = $this->settings['returnurl']; // the page the customer gets returned to
-		$fields['orderRef']       = 	$Purchase->id; // the page the customer gets returned to
+		$fields['orderRef'] 		 = $Purchase->id;
 		$fields['customerAddress']   = $this->Order->Billing->address . "\n" . $this->Order->Billing->xaddress . "\n" . $this->Order->Billing->city . "\n" . $this->Order->Billing->state .
 									   "\n" . $this->Order->Billing->country;
 		$fields['customerName']      = $this->Order->Billing->name;
@@ -58,11 +60,9 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 
 		ksort( $fields );
 
-		$fields['signature'] = hash( 'SHA512', http_build_query( $fields, '', '&' ) . (str_true( $this->settings['testmode'] ) ? 'Circle4Take40Idea' : $this->settings['secret'])) . '|' . implode( ',', array_keys( $fields ) );
+		$fields['signature'] = hash( 'SHA512', http_build_query( $fields, '', '&' ) . (str_true( $this->settings['testmode'] ) ? TEST_SIG : $this->settings['secret'])) . '|' . implode( ',', array_keys( $fields ) );
 
 		return $this->format( $fields );
-
-
 
 	}
 
@@ -76,13 +76,13 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 	 **/
 	public function submit ( ShoppPurchase $Purchase ) {
 		$id = sanitize_key( $this->module );
-		$title = Shopp::__( 'Sending order to Charity Clear&hellip;' );
+		$title = Shopp::__( 'Sending order to ' . self::RESELLER_NAME . '&hellip;' );
 		$message = '<form id="' . $id . '" action="' . self::LIVEURL . '" method="POST">' .
 					$this->form( $Purchase ) .
 					'<h1>' . $title . '</h1>' .
 					'<noscript>' .
-					'<p>' . Shopp::__( 'Click the &quot;Submit Order to Charity Clear&quot; button below to submit your order to Charity Clear for payment processing:' ) . '</p>' .
-					'<p><input type="submit" name="submit" value="' . Shopp::__('Submit Order to Charity Clear'). '" id="' . $id . '" /></p>' .
+					'<p>' . Shopp::__( 'Click the &quot;Submit Order to ' . self::RESELLER_NAME . '&quot; button below to submit your order to ' . self::RESELLER_NAME . ' for payment processing:' ) . '</p>' .
+					'<p><input type="submit" name="submit" value="' . Shopp::__('Submit Order to ' . self::RESELLER_NAME . ''). '" id="' . $id . '" /></p>' .
 					'</noscript>' .
 					'</form>' .
 					'<script type="text/javascript">document.getElementById("' . $id . '").submit();</script></body></html>';
@@ -101,7 +101,7 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 			ksort( $_POST );
 			$signature = $_POST['signature'];
 			unset( $_POST['signature'] );
-			$check = preg_replace( '/%0D%0A|%0A%0D|%0A|%0D/i', '%0A', http_build_query( $_POST, '', '&' ) . (str_true( $this->settings['testmode'] ) ? 'Circle4Take40Idea' : $this->settings['secret']));
+			$check = preg_replace( '/%0D%0A|%0A%0D|%0A|%0D/i', '%0A', http_build_query( $_POST, '', '&' ) . (str_true( $this->settings['testmode'] ) ? TEST_SIG : $this->settings['secret']));
 
 			if ( $signature !== hash( 'SHA512', $check ) ) {
 				shopp_add_error(Shopp::__( 'The calculated signature of the payment return did not match, for security this order cant complete automatically please contact support.', 'Shopp' ), 'cc_validation_error', SHOPP_TRXN_ERR );
@@ -116,18 +116,16 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 			shopp::redirect( shopp::url( false, 'checkout' ) );
 		}
 
-
 		if ( empty($_POST['orderRef']) ) {
-			shopp_add_error(Shopp::__('The order submitted by Charity Clear did not specify a transaction ID.'), SHOPP_TRXN_ERR);
+			shopp_add_error(Shopp::__('The order submitted by ' . self::RESELLER_NAME . ' did not specify a transaction ID.'), SHOPP_TRXN_ERR);
 			Shopp::redirect(Shopp::url(false, 'checkout'));
 		}
 
 		$Purchase = ShoppPurchase(new ShoppPurchase((int)$_POST['orderRef']));
 		if ( ! $Purchase->exists() ) {
-			shopp_add_error(Shopp::__('The order submitted by Charity Clear did not match any submitted orders.'), SHOPP_TRXN_ERR);
+			shopp_add_error(Shopp::__('The order submitted by ' . self::RESELLER_NAME . ' did not match any submitted orders.'), SHOPP_TRXN_ERR);
 			Shopp::redirect(Shopp::url(false, 'checkout'));
 		}
-
 
 
 		add_action( 'shopp_authed_order_event', array( ShoppOrder(), 'notify' ) );
@@ -135,14 +133,14 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 		add_action( 'shopp_authed_order_event', array( ShoppOrder(), 'success' ) );
 
 		shopp_add_order_event($Purchase->id, 'authed', array(
-			'txnid' => $_POST['xref'],   // Transaction ID
-			'amount' => (float)$_POST['amount']/100,  // Gross amount authorized
-			'fees' => false,            // Fees associated with transaction
-			'gateway' => $this->module, // The gateway module name
-			'paymethod' => 'Charity Clear', // Payment method (payment method label from payment settings)
-			'paytype' => $pay_method,   // Type of payment (check, MasterCard, etc)
-			'payid' => $invoice_id,     // Payment ID (last 4 of card or check number or other payment id)
-			'capture' => true           // Capture flag
+			'txnid' 	=> $_POST['xref'],   			// Transaction ID
+			'amount' 	=> (float)$_POST['amount']/100, // Gross amount authorized
+			'fees' 		=> false,            			// Fees associated with transaction
+			'gateway' 	=> $this->module, 				// The gateway module name
+			'paymethod' => self::RESELLER_NAME, 			// Payment method (payment method label from payment settings)
+			'paytype' 	=> $pay_method,   				// Type of payment (check, MasterCard, etc)
+			'payid' 	=> $invoice_id,     			// Payment ID (last 4 of card or check number or other payment id)
+			'capture' 	=> true           				// Capture flag
 		));
 
 		ShoppOrder()->purchase = ShoppPurchase()->id;
@@ -197,7 +195,7 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 			'name' => 'merchantID',
 			'size' => 10,
 			'value' => $this->settings['merchantID'],
-			'label' => __('Your CharityClear merchant ID.','Shopp')
+			'label' => __('Your ' . self::RESELLER_NAME . ' merchant ID.','Shopp')
 		));
 
 
@@ -211,7 +209,7 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 			'name' => 'secret',
 			'size' => 10,
 			'value' => $this->settings['secret'],
-			'label' => __('Your Charity Clear signature key.','Shopp')
+			'label' => __('Your ' . self::RESELLER_NAME . ' signature key.','Shopp')
 		));
 
 		$this->ui->checkbox(0,array(
@@ -229,7 +227,7 @@ class ShoppCharityClear extends GatewayFramework implements GatewayModule {
 			'label' => __('','Shopp')
 		));
 
-		$script = "var tc ='shoppcharityclear';jQuery(document).bind(tc+'Settings',function(){var $=jqnc(),p='#'+tc+'-',v=$(p+'verify'),t=$(p+'secret');v.change(function(){v.prop('checked')?t.parent().fadeIn('fast'):t.parent().hide();}).change();});";
+		$script = "var tc ='Shopp" . self::RESELLER_FUNC . "';jQuery(document).bind(tc+'Settings',function(){var $=jqnc(),p='#'+tc+'-',v=$(p+'verify'),t=$(p+'secret');v.change(function(){v.prop('checked')?t.parent().fadeIn('fast'):t.parent().hide();}).change();});";
 		$this->ui->behaviors( $script );
 	}
 
